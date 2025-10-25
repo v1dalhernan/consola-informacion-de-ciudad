@@ -31,10 +31,13 @@ const main = async () => {
 
                     const lugarSeleccionado = lugares.find(l => l.id === id);
 
+                    busquedas.agregarHistorial(lugarSeleccionado.nombre);
+
 
                     const clima = await busquedas.climaPorLugar(lugarSeleccionado.lat, lugarSeleccionado.lng);
-                    
+
                     // mostar resultados 
+                    console.clear();
                     console.log('\nInformación de la ciudad\n'.green);
                     console.log('Ciudad:', lugarSeleccionado.nombre.green);
                     console.log('Lat:', lugarSeleccionado.lat);
@@ -51,6 +54,10 @@ const main = async () => {
 
                 break;
             case '2':
+                busquedas.historialCapitalizado.forEach((element, i )=> {
+                    const idx = `${i + 1}.`.green
+                    console.log(idx + element);
+                });
             break;
             case '0':
             break;
