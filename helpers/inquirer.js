@@ -57,7 +57,7 @@ const leerImput = async (mensaje) => {
         {
             type: 'input',
             name: 'description',
-            mensaje,
+            message: mensaje,
             validate (value) {
                 if(value.length === 0){
                     return 'por facor ingreso un valor'

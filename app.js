@@ -1,72 +1,69 @@
 const { inquirerMenu, pausa, leerImput, listarLugares } = require('./helpers/inquirer');
-const Busquedas = require('./models/busquedas');
+const { Busquedas } = require('./models/busquedas');
 require('colors');
 require('dotenv').config();
 
-
 const main = async () => {
-
     let opt = '';
     const busquedas = new Busquedas();
 
     do {
-
         opt = await inquirerMenu();
 
-        switch(opt) {
+        switch (opt) {
             case '1':
-                // mostar mensaje 
-                const termino_de_busqueda = await leerImput('Ciudad: ');
+                try {
+                    const terminoDeBusqueda = await leerImput('Ciudad: ');
+                    const lugares = await busquedas.ciudad(terminoDeBusqueda);
 
-                // buscar los lugares
-                const lugares = await busquedas.ciudad(termino_de_busqueda);
+                    if (!lugares.length) {
+                        console.log('No se encontraron ciudades para esa búsqueda.'.yellow);
+                        break;
+                    }
 
-                // seleccionar el lugar 
-                const id = await listarLugares(lugares);
+                    const id = await listarLugares(lugares);
 
-                
+                    if (id !== '0') {
+                        const lugarSeleccionado = lugares.find(lugar => lugar.id === id);
+                        const clima = await busquedas.climaPorLugar(lugarSeleccionado.lat, lugarSeleccionado.lng);
 
-                // clima 
-                if(id != '0'){
+                        if (!clima) {
+                            console.log('No se recibieron datos de clima para la ubicación seleccionada.'.yellow);
+                            break;
+                        }
 
-                    const lugarSeleccionado = lugares.find(l => l.id === id);
+                        const resultadoPersistencia = busquedas.agregarHistorial(terminoDeBusqueda);
 
-                    busquedas.agregarHistorial(lugarSeleccionado.nombre);
+                        console.clear();
+                        console.log('\nInformación de la ciudad\n'.green);
+                        console.log('Ciudad:', lugarSeleccionado.nombre.green);
+                        console.log('Lat:', lugarSeleccionado.lat);
+                        console.log('Lng:', lugarSeleccionado.lng);
+                        console.log('Temperatura:', clima.temp + ' °C');
+                        console.log('Mínima:', clima.temp_min + ' °C');
+                        console.log('Máxima:', clima.temp_max + ' °C');
+                        console.log('El clima se ve:', clima.description.green);
 
-
-                    const clima = await busquedas.climaPorLugar(lugarSeleccionado.lat, lugarSeleccionado.lng);
-
-                    // mostar resultados 
-                    console.clear();
-                    console.log('\nInformación de la ciudad\n'.green);
-                    console.log('Ciudad:', lugarSeleccionado.nombre.green);
-                    console.log('Lat:', lugarSeleccionado.lat);
-                    console.log('Lng:',lugarSeleccionado.lng);
-                    console.log('Temperatura:', clima.temp + ' °C');
-                    console.log('Mínima:', clima.temp_max + ' °C');
-                    console.log('Máxima:', clima.temp_min + ' °C');
-                    console.log('El clima se ve:', clima.description.green);
+                        if (!resultadoPersistencia.ok) {
+                            console.log(`Aviso: ${resultadoPersistencia.error}`.yellow);
+                        }
+                    }
+                } catch (error) {
+                    console.log(`Error: ${error.message}`.red);
                 }
-                
-
-
-                
-
                 break;
             case '2':
-                busquedas.historialCapitalizado.forEach((element, i )=> {
-                    const idx = `${i + 1}.`.green
+                busquedas.historialCapitalizado.forEach((element, i) => {
+                    const idx = `${i + 1}.`.green;
                     console.log(idx + element);
                 });
-            break;
+                break;
             case '0':
-            break;
+                break;
         }
 
-        if(opt !== '0') await pausa();
-
-    }while (opt !== '0');
-
-}
+        if (opt !== '0') await pausa();
+    } while (opt !== '0');
+};
 
 main();

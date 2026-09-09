@@ -1,128 +1,157 @@
 const fs = require('fs');
-const axios = require('axios');
+const path = require('path');
+const {
+    agregarAlHistorial,
+    capitalizarCiudad,
+    mapearClima,
+    mapearLugares,
+} = require('./transformaciones');
 
+const REQUEST_TIMEOUT_MS = 10_000;
+
+const mensajeDeErrorHTTP = (servicio, error) => {
+    const estado = error.response?.status;
+
+    if (estado === 401 || estado === 403) {
+        return `La clave de ${servicio} no fue aceptada.`;
+    }
+
+    if (estado === 429) {
+        return `${servicio} alcanzó su límite de solicitudes. Inténtalo más tarde.`;
+    }
+
+    if (error.code === 'ECONNABORTED') {
+        return `La solicitud a ${servicio} tardó demasiado.`;
+    }
+
+    return `No se pudo consultar ${servicio}. Revisa tu conexión e inténtalo de nuevo.`;
+};
 
 class Busquedas {
-    historial = [];
-    dbPath = './db/database.json';
-
-    constructor() {
+    constructor({
+        dbPath = path.join(__dirname, '..', 'db', 'database.json'),
+        fsModule = fs,
+        httpClient,
+    } = {}) {
+        this.historial = [];
+        this.dbPath = dbPath;
+        this.fs = fsModule;
+        this.httpClient = httpClient;
+        this.errorDePersistencia = null;
         this.leerDb();
     }
 
-
-    async ciudad (lugar = ''){
-        try {
-            // peticion http 
-            const instance = axios.create({
-                baseURL: `https://api.mapbox.com/search/geocode/v6/forward`,
-                params: {
-                    'q': lugar,
-                    'proximity': '-73.990593,40.740121',
-                    'language': 'es',
-                    'access_token': process.env.MAPBOX_KEY || '',
-                }
-            });
-            
-            const respuesta = await instance.get();
-            
-            return respuesta.data.features.map((lugar) => ({
-                id: lugar.id,
-                nombre: lugar.properties.full_address,
-                lng: lugar.properties.coordinates.longitude,
-                lat: lugar.properties.coordinates.latitude,
-            }));
-
-        
-
-        } catch(err) {
-            return [];
-        }
-       
+    get clienteHTTP() {
+        return this.httpClient ?? require('axios');
     }
 
-    async climaPorLugar(lat, long) {
-        try {
-
-            const instance = axios.create({
-                baseURL: `https://api.openweathermap.org/data/2.5/weather`,
-                params: {
-                    'lon': long,
-                    'lat': lat,
-                    'appid': process.env.OPEN_WHEATHER,
-                    'units': 'metric',
-                    'lang': 'es'
-                }
-            });
-
-
-            const respuesta = await instance.get();
-
-            const {main, weather } = respuesta.data;            
-
-            return {
-                temp: main.temp,
-                temp_max: main.temp_max,
-                temp_min: main.temp_min,
-                description: weather[0].description,
-            };
-
-
-
-        } catch (err){
-            return [];
+    async ciudad(lugar = '') {
+        if (!process.env.MAPBOX_KEY) {
+            throw new Error('Falta la variable de entorno MAPBOX_KEY.');
         }
 
-        
+        try {
+            const instance = this.clienteHTTP.create({
+                baseURL: 'https://api.mapbox.com/search/geocode/v6/forward',
+                timeout: REQUEST_TIMEOUT_MS,
+                params: {
+                    q: lugar,
+                    proximity: '-73.990593,40.740121',
+                    language: 'es',
+                    access_token: process.env.MAPBOX_KEY,
+                },
+            });
+            const respuesta = await instance.get();
+
+            return mapearLugares(respuesta.data);
+        } catch (error) {
+            throw new Error(mensajeDeErrorHTTP('Mapbox', error));
+        }
     }
 
-    agregarHistorial(lugar = ''){
+    async climaPorLugar(lat, lng) {
+        if (!process.env.OPEN_WHEATHER) {
+            throw new Error('Falta la variable de entorno OPEN_WHEATHER.');
+        }
 
-        //TODO: prevenir duplicados
-        if(this.historial?.includes(lugar.toLocaleLowerCase())){
-            return;
-        } 
+        try {
+            const instance = this.clienteHTTP.create({
+                baseURL: 'https://api.openweathermap.org/data/2.5/weather',
+                timeout: REQUEST_TIMEOUT_MS,
+                params: {
+                    lon: lng,
+                    lat,
+                    appid: process.env.OPEN_WHEATHER,
+                    units: 'metric',
+                    lang: 'es',
+                },
+            });
+            const respuesta = await instance.get();
+            const clima = mapearClima(respuesta.data);
 
-        this.historial = this.historial.splice(0,5);
+            if (!clima) {
+                throw new Error('La respuesta de OpenWeather no contiene datos completos.');
+            }
 
-        this.historial.unshift(lugar.toLocaleLowerCase());
+            return clima;
+        } catch (error) {
+            if (error.message === 'La respuesta de OpenWeather no contiene datos completos.') {
+                throw error;
+            }
 
-        //TODO: grabar en db
-
-        this.guardarDB();
-            
+            throw new Error(mensajeDeErrorHTTP('OpenWeather', error));
+        }
     }
 
+    agregarHistorial(termino = '') {
+        this.historial = agregarAlHistorial(this.historial, termino);
+
+        try {
+            this.guardarDB();
+            return { ok: true };
+        } catch (error) {
+            return { ok: false, error: error.message };
+        }
+    }
 
     guardarDB() {
+        if (this.errorDePersistencia) {
+            throw new Error(this.errorDePersistencia);
+        }
 
-        const payload = {
-            historial: this.historial,
-        };
+        const payload = { historial: this.historial };
 
-        fs.writeFileSync(this.dbPath, JSON.stringify(payload));
-
+        try {
+            this.fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
+            this.fs.writeFileSync(this.dbPath, JSON.stringify(payload, null, 2));
+        } catch {
+            throw new Error('No se pudo guardar el historial local.');
+        }
     }
 
     leerDb() {
+        if (!this.fs.existsSync(this.dbPath)) {
+            return;
+        }
 
-         if(!fs.existsSync(this.dbPath)){
-                return null;
+        try {
+            const info = this.fs.readFileSync(this.dbPath, { encoding: 'utf-8' });
+            const data = JSON.parse(info);
+
+            if (!Array.isArray(data.historial)) {
+                throw new Error('Formato inválido');
             }
 
-            const info = fs.readFileSync(this.dbPath, {encoding: 'utf-8'});
-            const data = JSON.parse(info);
-            this.historial = data.historial;
-
+            this.historial = data.historial.filter(item => typeof item === 'string');
+        } catch {
+            this.historial = [];
+            this.errorDePersistencia = 'El historial local está dañado y no se modificó. Repara o elimina el archivo para continuar guardando.';
+        }
     }
 
-    get historialCapitalizado () {
-        return this.historial.map(value => {
-            let palabras = value.split(' ');
-            palabras = palabras.map(p => p[0].toUpperCase() + p.substring(1));
-            return palabras.join(' ');
-        })
+    get historialCapitalizado() {
+        return this.historial.map(capitalizarCiudad);
     }
 }
 
-module.exports = Busquedas;
+module.exports = { Busquedas, REQUEST_TIMEOUT_MS };

@@ -1,13 +1,14 @@
 {
-  "name": "05-clima-app",
+  "name": "consola-informacion-de-ciudad",
   "version": "1.0.0",
-  "description": "",
+  "description": "CLI para buscar ciudades, consultar su clima y guardar un historial local.",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js"
+    "start": "node app.js",
+    "test": "node test/transformaciones.test.js && node test/busquedas.test.js"
   },
   "keywords": [],
-  "author": "",
+  "author": "Jhonathan Vidal",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
